@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.0
+ * Version:     1.1.1
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -27,8 +27,16 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Liegt noch die alte Fassung als MU-Plugin daneben, wuerde dieselbe Funktion
+// zweimal definiert und die Seite mit einem Fatal Error stehen. Dann tritt
+// diese Fassung zurueck; das Dashboard meldet die alte Version als veraltet,
+// und die MU-Datei wird entfernt. Lieber alt als kaputt.
+if (function_exists('vlip_health_secret')) {
+    return;
+}
+
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.0');
+define('VLIP_HEALTH_VERSION', '1.1.1');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
