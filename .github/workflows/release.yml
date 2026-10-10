@@ -13,7 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Zip bauen
-        run: zip -r vlip-health.zip vlip-health
+        run: |
+          mkdir -p vlip-health && cp vlip-health.php vlip-health/ && zip -r vlip-health.zip vlip-health
       - name: Release anlegen
         uses: softprops/action-gh-release@v2
         with:
