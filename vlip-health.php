@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.2
+ * Version:     1.1.3
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -39,7 +39,7 @@ if (defined('VLIP_HEALTH_LOADED')) {
 define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.2');
+define('VLIP_HEALTH_VERSION', '1.1.3');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -421,6 +421,13 @@ add_filter('auto_update_plugin', function ($update, $item) {
 if (!function_exists('vlip_health_ist_lighthouse')) {
     function vlip_health_ist_lighthouse(): bool
     {
+        // Das Dashboard haengt `vlip-shot` an die Adresse, wenn es die Vorschau
+        // aufnimmt -- das umgeht auch Seiten-Caches, die Lighthouse sonst die
+        // gespeicherte Seite samt Banner liefern. Der User-Agent bleibt als
+        // zweiter Weg, falls jemand PageSpeed von Hand anstoesst.
+        if (isset($_GET['vlip-shot'])) {
+            return true;
+        }
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         return $ua !== '' && stripos($ua, 'Chrome-Lighthouse') !== false;
     }
@@ -432,7 +439,7 @@ add_action('wp_head', function () {
     }
     echo '<style id="vlip-health-no-consent">'
         . '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],'
-        . '[id*="borlabs" i],[class*="borlabs" i],[id*="cmplz" i],[class*="cmplz" i],'
+        . '[id*="borlabs" i],[class*="borlabs" i],[class*="brlbs" i],[id*="cmplz" i],[class*="cmplz" i],'
         . '[id*="usercentrics" i],[class*="usercentrics" i],#onetrust-consent-sdk,#CybotCookiebotDialog,'
         . '[id*="gdpr" i],[class*="gdpr" i],[id*="dsgvo" i],[class*="dsgvo" i]'
         . '{display:none!important;visibility:hidden!important}'
