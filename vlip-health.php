@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.1
+ * Version:     1.1.2
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -27,16 +27,19 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Liegt noch die alte Fassung als MU-Plugin daneben, wuerde dieselbe Funktion
-// zweimal definiert und die Seite mit einem Fatal Error stehen. Dann tritt
-// diese Fassung zurueck; das Dashboard meldet die alte Version als veraltet,
-// und die MU-Datei wird entfernt. Lieber alt als kaputt.
-if (function_exists('vlip_health_secret')) {
+// Zwei Fassungen nebeneinander (etwa die alte als MU-Plugin) duerfen die
+// Seite nicht mit einem Fatal Error stoppen. Deshalb steht jede Funktion
+// unten in einem function_exists-Block: PHP legt unbedingte Funktionen schon
+// beim Laden der Datei an, ein Schutz per function_exists am Dateianfang
+// sieht die eigene Funktion und bricht immer ab (so geschehen in 1.1.1).
+// Die Konstante verhindert, dass zwei neue Fassungen ihre Hooks doppelt setzen.
+if (defined('VLIP_HEALTH_LOADED')) {
     return;
 }
+define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.1');
+define('VLIP_HEALTH_VERSION', '1.1.2');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -73,27 +76,29 @@ add_action('rest_api_init', function () {
  *
  * Ist keine Quelle gefuellt, bleibt der Endpunkt geschlossen.
  */
-function vlip_health_secret(): string
-{
-    // Die Konstante zaehlt nur, wenn sie wirklich eine nicht leere Zeichenkette
-    // ist. Bedrock definiert sie ueber Config::define('...', env('...')) auch
-    // dann, wenn env() nichts liefert -- die Konstante ist dann null. Ein
-    // blosses "!== ''" haelt null faelschlich fuer gesetzt, liefert einen
-    // leeren String zurueck und ueberspringt die drei Umgebungsquellen, die den
-    // Wert gehabt haetten. Das Ergebnis war ein 401, das wie ein falsches
-    // Secret aussieht, obwohl der Wert in der .env steht.
-    $konstante = defined('VLIP_HEALTH_SECRET') ? VLIP_HEALTH_SECRET : null;
-    if (is_string($konstante) && trim($konstante) !== '') {
-        return trim($konstante);
-    }
-    foreach ([$_ENV['VLIP_HEALTH_SECRET'] ?? null, $_SERVER['VLIP_HEALTH_SECRET'] ?? null, getenv('VLIP_HEALTH_SECRET')] as $wert) {
-        // Getrimmt, weil ein aus der Zwischenablage uebernommener Zeilenumbruch
-        // sonst zu einem Vergleich fuehrt, der nie aufgeht.
-        if (is_string($wert) && trim($wert) !== '') {
-            return trim($wert);
+if (!function_exists('vlip_health_secret')) {
+    function vlip_health_secret(): string
+    {
+        // Die Konstante zaehlt nur, wenn sie wirklich eine nicht leere Zeichenkette
+        // ist. Bedrock definiert sie ueber Config::define('...', env('...')) auch
+        // dann, wenn env() nichts liefert -- die Konstante ist dann null. Ein
+        // blosses "!== ''" haelt null faelschlich fuer gesetzt, liefert einen
+        // leeren String zurueck und ueberspringt die drei Umgebungsquellen, die den
+        // Wert gehabt haetten. Das Ergebnis war ein 401, das wie ein falsches
+        // Secret aussieht, obwohl der Wert in der .env steht.
+        $konstante = defined('VLIP_HEALTH_SECRET') ? VLIP_HEALTH_SECRET : null;
+        if (is_string($konstante) && trim($konstante) !== '') {
+            return trim($konstante);
         }
+        foreach ([$_ENV['VLIP_HEALTH_SECRET'] ?? null, $_SERVER['VLIP_HEALTH_SECRET'] ?? null, getenv('VLIP_HEALTH_SECRET')] as $wert) {
+            // Getrimmt, weil ein aus der Zwischenablage uebernommener Zeilenumbruch
+            // sonst zu einem Vergleich fuehrt, der nie aufgeht.
+            if (is_string($wert) && trim($wert) !== '') {
+                return trim($wert);
+            }
+        }
+        return '';
     }
-    return '';
 }
 
 /**
@@ -117,43 +122,47 @@ function vlip_health_secret(): string
  * TLS-Verbindung. `Authorization` bleibt fuer Installationen, die schon so
  * eingerichtet sind.
  */
-function vlip_health_authorized(): bool
-{
-    $erwartet = vlip_health_secret();
-    if ($erwartet === '') {
-        return false;
-    }
+if (!function_exists('vlip_health_authorized')) {
+    function vlip_health_authorized(): bool
+    {
+        $erwartet = vlip_health_secret();
+        if ($erwartet === '') {
+            return false;
+        }
 
-    $eigen = $_SERVER['HTTP_X_VLIP_HEALTH_SECRET'] ?? '';
-    if (is_string($eigen) && trim($eigen) !== '') {
-        return hash_equals($erwartet, trim($eigen));
-    }
+        $eigen = $_SERVER['HTTP_X_VLIP_HEALTH_SECRET'] ?? '';
+        if (is_string($eigen) && trim($eigen) !== '') {
+            return hash_equals($erwartet, trim($eigen));
+        }
 
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-    if (stripos($header, 'Bearer ') !== 0) {
-        return false;
+        $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if (stripos($header, 'Bearer ') !== 0) {
+            return false;
+        }
+        return hash_equals($erwartet, trim(substr($header, 7)));
     }
-    return hash_equals($erwartet, trim(substr($header, 7)));
 }
 
 /** Kern-Version und ob ein Update ansteht. */
-function vlip_health_core(): array
-{
-    require_once ABSPATH . 'wp-admin/includes/update.php';
-    $current = get_bloginfo('version');
-    $updates = get_core_updates();
-    $latest  = $current;
-    foreach ((array) $updates as $u) {
-        if (isset($u->response) && $u->response === 'upgrade' && isset($u->current)) {
-            $latest = $u->current;
-            break;
+if (!function_exists('vlip_health_core')) {
+    function vlip_health_core(): array
+    {
+        require_once ABSPATH . 'wp-admin/includes/update.php';
+        $current = get_bloginfo('version');
+        $updates = get_core_updates();
+        $latest  = $current;
+        foreach ((array) $updates as $u) {
+            if (isset($u->response) && $u->response === 'upgrade' && isset($u->current)) {
+                $latest = $u->current;
+                break;
+            }
         }
+        return [
+            'version'         => $current,
+            'latest'          => $latest,
+            'updateAvailable' => version_compare($latest, $current, '>'),
+        ];
     }
-    return [
-        'version'         => $current,
-        'latest'          => $latest,
-        'updateAvailable' => version_compare($latest, $current, '>'),
-    ];
 }
 
 /**
@@ -162,91 +171,99 @@ function vlip_health_core(): array
  * Hinweis nur weitergegeben, wenn er wirklich vorliegt -- lieber keine Angabe
  * als eine erfundene.
  */
-function vlip_health_plugins(): array
-{
-    require_once ABSPATH . 'wp-admin/includes/plugin.php';
-    require_once ABSPATH . 'wp-admin/includes/update.php';
+if (!function_exists('vlip_health_plugins')) {
+    function vlip_health_plugins(): array
+    {
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        require_once ABSPATH . 'wp-admin/includes/update.php';
 
-    $alle    = get_plugins();
-    $updates = get_site_transient('update_plugins');
-    $aktiv   = (array) get_option('active_plugins', []);
-    $raus    = [];
+        $alle    = get_plugins();
+        $updates = get_site_transient('update_plugins');
+        $aktiv   = (array) get_option('active_plugins', []);
+        $raus    = [];
 
-    foreach ($alle as $datei => $daten) {
-        $u       = $updates->response[$datei] ?? null;
-        $slug    = dirname($datei) !== '.' ? dirname($datei) : basename($datei, '.php');
-        $raus[] = [
-            'slug'             => $slug,
-            'name'             => $daten['Name'] ?? $slug,
-            'version'          => $daten['Version'] ?? null,
-            'latest'           => $u->new_version ?? ($daten['Version'] ?? null),
-            'active'           => in_array($datei, $aktiv, true) || is_plugin_active_for_network($datei),
-            'hasUpdate'        => $u !== null,
-            'isSecurityUpdate' => isset($u->upgrade_notice) && stripos((string) $u->upgrade_notice, 'securit') !== false,
-        ];
+        foreach ($alle as $datei => $daten) {
+            $u       = $updates->response[$datei] ?? null;
+            $slug    = dirname($datei) !== '.' ? dirname($datei) : basename($datei, '.php');
+            $raus[] = [
+                'slug'             => $slug,
+                'name'             => $daten['Name'] ?? $slug,
+                'version'          => $daten['Version'] ?? null,
+                'latest'           => $u->new_version ?? ($daten['Version'] ?? null),
+                'active'           => in_array($datei, $aktiv, true) || is_plugin_active_for_network($datei),
+                'hasUpdate'        => $u !== null,
+                'isSecurityUpdate' => isset($u->upgrade_notice) && stripos((string) $u->upgrade_notice, 'securit') !== false,
+            ];
+        }
+        return $raus;
     }
-    return $raus;
 }
 
 /** Themes analog zu den Plugins. */
-function vlip_health_themes(): array
-{
-    $updates = get_site_transient('update_themes');
-    $aktiv   = wp_get_theme();
-    $raus    = [];
+if (!function_exists('vlip_health_themes')) {
+    function vlip_health_themes(): array
+    {
+        $updates = get_site_transient('update_themes');
+        $aktiv   = wp_get_theme();
+        $raus    = [];
 
-    foreach (wp_get_themes() as $slug => $theme) {
-        $neu    = $updates->response[$slug]['new_version'] ?? null;
-        $raus[] = [
-            'slug'      => $slug,
-            'name'      => $theme->get('Name'),
-            'version'   => $theme->get('Version'),
-            'latest'    => $neu ?? $theme->get('Version'),
-            'active'    => $slug === $aktiv->get_stylesheet(),
-            'hasUpdate' => $neu !== null,
-        ];
+        foreach (wp_get_themes() as $slug => $theme) {
+            $neu    = $updates->response[$slug]['new_version'] ?? null;
+            $raus[] = [
+                'slug'      => $slug,
+                'name'      => $theme->get('Name'),
+                'version'   => $theme->get('Version'),
+                'latest'    => $neu ?? $theme->get('Version'),
+                'active'    => $slug === $aktiv->get_stylesheet(),
+                'hasUpdate' => $neu !== null,
+            ];
+        }
+        return $raus;
     }
-    return $raus;
 }
 
 /** Datenbank-Engine und -Version. */
-function vlip_health_db(): array
-{
-    global $wpdb;
-    $version = $wpdb->db_version();
-    $server  = $wpdb->get_var('SELECT VERSION()');
-    return [
-        'engine'  => stripos((string) $server, 'mariadb') !== false ? 'mariadb' : 'mysql',
-        'version' => $server ?: $version,
-    ];
+if (!function_exists('vlip_health_db')) {
+    function vlip_health_db(): array
+    {
+        global $wpdb;
+        $version = $wpdb->db_version();
+        $server  = $wpdb->get_var('SELECT VERSION()');
+        return [
+            'engine'  => stripos((string) $server, 'mariadb') !== false ? 'mariadb' : 'mysql',
+            'version' => $server ?: $version,
+        ];
+    }
 }
 
 /**
  * Ablaufdatum des Zertifikats. Best effort: ist openssl nicht verfuegbar oder
  * der Port zu, bleibt das Feld leer statt zu raten.
  */
-function vlip_health_ssl(): array
-{
-    if (!function_exists('stream_socket_client')) {
-        return ['expiresAt' => null];
+if (!function_exists('vlip_health_ssl')) {
+    function vlip_health_ssl(): array
+    {
+        if (!function_exists('stream_socket_client')) {
+            return ['expiresAt' => null];
+        }
+        $host = parse_url(home_url(), PHP_URL_HOST);
+        if (!$host) {
+            return ['expiresAt' => null];
+        }
+        $ctx = stream_context_create(['ssl' => ['capture_peer_cert' => true, 'verify_peer' => false, 'verify_peer_name' => false]]);
+        $sock = @stream_socket_client("ssl://{$host}:443", $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
+        if (!$sock) {
+            return ['expiresAt' => null];
+        }
+        $params = stream_context_get_params($sock);
+        fclose($sock);
+        $cert = $params['options']['ssl']['peer_certificate'] ?? null;
+        if (!$cert) {
+            return ['expiresAt' => null];
+        }
+        $info = openssl_x509_parse($cert);
+        return ['expiresAt' => isset($info['validTo_time_t']) ? gmdate('c', $info['validTo_time_t']) : null];
     }
-    $host = parse_url(home_url(), PHP_URL_HOST);
-    if (!$host) {
-        return ['expiresAt' => null];
-    }
-    $ctx = stream_context_create(['ssl' => ['capture_peer_cert' => true, 'verify_peer' => false, 'verify_peer_name' => false]]);
-    $sock = @stream_socket_client("ssl://{$host}:443", $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
-    if (!$sock) {
-        return ['expiresAt' => null];
-    }
-    $params = stream_context_get_params($sock);
-    fclose($sock);
-    $cert = $params['options']['ssl']['peer_certificate'] ?? null;
-    if (!$cert) {
-        return ['expiresAt' => null];
-    }
-    $info = openssl_x509_parse($cert);
-    return ['expiresAt' => isset($info['validTo_time_t']) ? gmdate('c', $info['validTo_time_t']) : null];
 }
 
 /**
@@ -254,51 +271,55 @@ function vlip_health_ssl(): array
  * nichts, bleibt das Feld leer -- eine erfundene Sicherung waere schlimmer als
  * keine Angabe.
  */
-function vlip_health_backup(): array
-{
-    $leer = ['lastRunAt' => null, 'provider' => null, 'size' => null];
+if (!function_exists('vlip_health_backup')) {
+    function vlip_health_backup(): array
+    {
+        $leer = ['lastRunAt' => null, 'provider' => null, 'size' => null];
 
-    if (class_exists('UpdraftPlus_Options')) {
-        $history = get_option('updraft_last_backup');
-        if (is_array($history) && !empty($history['backup_time'])) {
-            return ['lastRunAt' => gmdate('c', (int) $history['backup_time']), 'provider' => 'updraftplus', 'size' => null];
+        if (class_exists('UpdraftPlus_Options')) {
+            $history = get_option('updraft_last_backup');
+            if (is_array($history) && !empty($history['backup_time'])) {
+                return ['lastRunAt' => gmdate('c', (int) $history['backup_time']), 'provider' => 'updraftplus', 'size' => null];
+            }
+            return array_merge($leer, ['provider' => 'updraftplus']);
         }
-        return array_merge($leer, ['provider' => 'updraftplus']);
-    }
-    if (defined('BACKWPUP_PLUGIN_BASENAME')) {
-        $letzte = get_site_option('backwpup_backupscheckedjob');
-        if (is_array($letzte) && !empty($letzte['logtime'])) {
-            return ['lastRunAt' => gmdate('c', (int) $letzte['logtime']), 'provider' => 'backwpup', 'size' => null];
+        if (defined('BACKWPUP_PLUGIN_BASENAME')) {
+            $letzte = get_site_option('backwpup_backupscheckedjob');
+            if (is_array($letzte) && !empty($letzte['logtime'])) {
+                return ['lastRunAt' => gmdate('c', (int) $letzte['logtime']), 'provider' => 'backwpup', 'size' => null];
+            }
+            return array_merge($leer, ['provider' => 'backwpup']);
         }
-        return array_merge($leer, ['provider' => 'backwpup']);
+        return $leer;
     }
-    return $leer;
 }
 
 /** Der vollstaendige Bericht. */
-function vlip_health_report(): WP_REST_Response
-{
-    $php_eol = [
-        '8.5' => '2029-12-31', '8.4' => '2028-12-31', '8.3' => '2027-12-31',
-        '8.2' => '2026-12-31', '8.1' => '2025-12-31', '8.0' => '2023-11-26',
-        '7.4' => '2022-11-28',
-    ];
-    $kurz = implode('.', array_slice(explode('.', PHP_VERSION), 0, 2));
+if (!function_exists('vlip_health_report')) {
+    function vlip_health_report(): WP_REST_Response
+    {
+        $php_eol = [
+            '8.5' => '2029-12-31', '8.4' => '2028-12-31', '8.3' => '2027-12-31',
+            '8.2' => '2026-12-31', '8.1' => '2025-12-31', '8.0' => '2023-11-26',
+            '7.4' => '2022-11-28',
+        ];
+        $kurz = implode('.', array_slice(explode('.', PHP_VERSION), 0, 2));
 
-    return new WP_REST_Response([
-        'wp'      => vlip_health_core(),
-        'php'     => ['version' => PHP_VERSION, 'eolDate' => $php_eol[$kurz] ?? null],
-        'plugins' => vlip_health_plugins(),
-        'themes'  => vlip_health_themes(),
-        'db'      => vlip_health_db(),
-        'ssl'     => vlip_health_ssl(),
-        'backup'  => vlip_health_backup(),
-        'https'         => is_ssl() || strpos(home_url(), 'https://') === 0,
-        'debugMode'     => defined('WP_DEBUG') && WP_DEBUG,
-        'adminUserCount' => count(get_users(['role' => 'administrator', 'fields' => 'ID'])),
-        'pluginVersion' => VLIP_HEALTH_VERSION,
-        'checkedAt'     => gmdate('c'),
-    ], 200);
+        return new WP_REST_Response([
+            'wp'      => vlip_health_core(),
+            'php'     => ['version' => PHP_VERSION, 'eolDate' => $php_eol[$kurz] ?? null],
+            'plugins' => vlip_health_plugins(),
+            'themes'  => vlip_health_themes(),
+            'db'      => vlip_health_db(),
+            'ssl'     => vlip_health_ssl(),
+            'backup'  => vlip_health_backup(),
+            'https'         => is_ssl() || strpos(home_url(), 'https://') === 0,
+            'debugMode'     => defined('WP_DEBUG') && WP_DEBUG,
+            'adminUserCount' => count(get_users(['role' => 'administrator', 'fields' => 'ID'])),
+            'pluginVersion' => VLIP_HEALTH_VERSION,
+            'checkedAt'     => gmdate('c'),
+        ], 200);
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -311,30 +332,34 @@ function vlip_health_report(): WP_REST_Response
  * ------------------------------------------------------------------------- */
 
 /** update.json holen, zwischengespeichert. null, wenn nicht erreichbar oder unbrauchbar. */
-function vlip_health_update_info(): ?array
-{
-    $cache = get_site_transient('vlip_health_update_info');
-    if (is_array($cache)) {
-        return $cache ?: null;
-    }
-    $antwort = wp_remote_get(VLIP_HEALTH_UPDATE_URL, ['timeout' => 8, 'headers' => ['Accept' => 'application/json']]);
-    $info    = [];
-    if (!is_wp_error($antwort) && wp_remote_retrieve_response_code($antwort) === 200) {
-        $json = json_decode((string) wp_remote_retrieve_body($antwort), true);
-        if (is_array($json) && !empty($json['version']) && !empty($json['download_url'])
-            && strpos((string) $json['download_url'], 'https://') === 0) {
-            $info = $json;
+if (!function_exists('vlip_health_update_info')) {
+    function vlip_health_update_info(): ?array
+    {
+        $cache = get_site_transient('vlip_health_update_info');
+        if (is_array($cache)) {
+            return $cache ?: null;
         }
+        $antwort = wp_remote_get(VLIP_HEALTH_UPDATE_URL, ['timeout' => 8, 'headers' => ['Accept' => 'application/json']]);
+        $info    = [];
+        if (!is_wp_error($antwort) && wp_remote_retrieve_response_code($antwort) === 200) {
+            $json = json_decode((string) wp_remote_retrieve_body($antwort), true);
+            if (is_array($json) && !empty($json['version']) && !empty($json['download_url'])
+                && strpos((string) $json['download_url'], 'https://') === 0) {
+                $info = $json;
+            }
+        }
+        // Auch ein Fehlschlag wird gemerkt, sonst haemmert jede Admin-Seite auf die Quelle.
+        set_site_transient('vlip_health_update_info', $info, 12 * HOUR_IN_SECONDS);
+        return $info ?: null;
     }
-    // Auch ein Fehlschlag wird gemerkt, sonst haemmert jede Admin-Seite auf die Quelle.
-    set_site_transient('vlip_health_update_info', $info, 12 * HOUR_IN_SECONDS);
-    return $info ?: null;
 }
 
 /** Als MU-Plugin gibt es keinen Updater; dann bleibt dieser Teil still. */
-function vlip_health_ist_normales_plugin(): bool
-{
-    return defined('WP_PLUGIN_DIR') && strpos(wp_normalize_path(__FILE__), wp_normalize_path(WP_PLUGIN_DIR)) === 0;
+if (!function_exists('vlip_health_ist_normales_plugin')) {
+    function vlip_health_ist_normales_plugin(): bool
+    {
+        return defined('WP_PLUGIN_DIR') && strpos(wp_normalize_path(__FILE__), wp_normalize_path(WP_PLUGIN_DIR)) === 0;
+    }
 }
 
 add_filter('pre_set_site_transient_update_plugins', function ($transient) {
@@ -393,10 +418,12 @@ add_filter('auto_update_plugin', function ($update, $item) {
  * Kennungen der gaengigen Consent-Werkzeuge; mit dem Filter
  * `vlip_health_hide_consent` laesst es sich je Seite abschalten.
  * ------------------------------------------------------------------------- */
-function vlip_health_ist_lighthouse(): bool
-{
-    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-    return $ua !== '' && stripos($ua, 'Chrome-Lighthouse') !== false;
+if (!function_exists('vlip_health_ist_lighthouse')) {
+    function vlip_health_ist_lighthouse(): bool
+    {
+        $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        return $ua !== '' && stripos($ua, 'Chrome-Lighthouse') !== false;
+    }
 }
 
 add_action('wp_head', function () {
