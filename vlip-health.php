@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.3
+ * Version:     1.1.4
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -39,7 +39,7 @@ if (defined('VLIP_HEALTH_LOADED')) {
 define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.3');
+define('VLIP_HEALTH_VERSION', '1.1.4');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -59,6 +59,21 @@ add_action('rest_api_init', function () {
         'permission_callback' => 'vlip_health_authorized',
     ]);
 });
+
+/*
+ * Nie zwischenspeichern, auch nicht die 401. Seitencaches (nginx
+ * fastcgi_cache, Cloudflare, Caching-Plugins) schluesseln nach URL, nicht nach
+ * Secret: eine gecachte Antwort ging sonst an jeden Aufrufer ohne Secret, und
+ * das Dashboard sah bis zu einer Stunde lang den alten Stand (pro-multis.de,
+ * 10/2026).
+ */
+add_filter('rest_post_dispatch', function ($response, $server, $request) {
+    if ($response instanceof WP_REST_Response && $request->get_route() === '/vlip/v1/health') {
+        $response->header('Cache-Control', 'no-store, no-cache, private, max-age=0');
+        $response->header('Pragma', 'no-cache');
+    }
+    return $response;
+}, 10, 3);
 
 /**
  * Das erwartete Secret, aus der ersten Quelle, die etwas hergibt:
@@ -184,6 +199,13 @@ if (!function_exists('vlip_health_plugins')) {
 
         foreach ($alle as $datei => $daten) {
             $u       = $updates->response[$datei] ?? null;
+            // Der Transient wird nur alle 12 h erneuert. Kommt das Update per
+            // Git- oder Composer-Deploy statt ueber WordPress, steht es dort
+            // weiter als offen, obwohl die neue Version laengst liegt.
+            if ($u !== null && isset($u->new_version, $daten['Version'])
+                && !version_compare((string) $u->new_version, (string) $daten['Version'], '>')) {
+                $u = null;
+            }
             $slug    = dirname($datei) !== '.' ? dirname($datei) : basename($datei, '.php');
             $raus[] = [
                 'slug'             => $slug,
