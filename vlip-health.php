@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.4
+ * Version:     1.1.5
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -39,7 +39,7 @@ if (defined('VLIP_HEALTH_LOADED')) {
 define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.4');
+define('VLIP_HEALTH_VERSION', '1.1.5');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -459,11 +459,14 @@ add_action('wp_head', function () {
     if (is_admin() || !vlip_health_ist_lighthouse() || !apply_filters('vlip_health_hide_consent', true)) {
         return;
     }
+    // Nur unterhalb von body: Complianz setzt zur Laufzeit cmplz-Klassen an
+    // <body> selbst, und ohne die Einschraenkung blendete die Regel die ganze
+    // Seite aus -- Lighthouse fotografierte eine weisse Flaeche (pro-multis.de, 10/2026).
     echo '<style id="vlip-health-no-consent">'
-        . '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],'
+        . 'body :is([id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],'
         . '[id*="borlabs" i],[class*="borlabs" i],[class*="brlbs" i],[id*="cmplz" i],[class*="cmplz" i],'
         . '[id*="usercentrics" i],[class*="usercentrics" i],#onetrust-consent-sdk,#CybotCookiebotDialog,'
-        . '[id*="gdpr" i],[class*="gdpr" i],[id*="dsgvo" i],[class*="dsgvo" i]'
+        . '[id*="gdpr" i],[class*="gdpr" i],[id*="dsgvo" i],[class*="dsgvo" i])'
         . '{display:none!important;visibility:hidden!important}'
         . 'html,body{overflow:visible!important;position:static!important}'
         . '</style>' . "\n";
