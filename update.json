@@ -1,6 +1,6 @@
 {
-  "version": "1.1.5",
-  "download_url": "https://github.com/MAAANYdevs/vlip-health/releases/download/v1.1.5/vlip-health.zip",
+  "version": "1.1.6",
+  "download_url": "https://github.com/MAAANYdevs/vlip-health/releases/download/v1.1.6/vlip-health.zip",
   "requires_php": "8.1",
   "tested": "6.8"
 }

@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.5
+ * Version:     1.1.6
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -39,7 +39,7 @@ if (defined('VLIP_HEALTH_LOADED')) {
 define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.5');
+define('VLIP_HEALTH_VERSION', '1.1.6');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -316,6 +316,30 @@ if (!function_exists('vlip_health_backup')) {
     }
 }
 
+/**
+ * Build-Datum des laufenden PHP, wie phpinfo() es nennt („Oct 21 2026 16:04:59“).
+ * Hoster wie domainfactory spielen Sicherheitskorrekturen in die bestehende
+ * Version ein (Backport), die Versionsnummer bleibt dann gleich, nur der Build
+ * ist neu. Das Dashboard liest daran ab, ob ein Patch drauf ist. phpinfo kann
+ * vom Hoster abgeschaltet sein, dann null; Text- und HTML-Ausgabe werden beide
+ * verstanden, je nach SAPI.
+ */
+if (!function_exists('vlip_health_php_build')) {
+    function vlip_health_php_build(): ?string
+    {
+        if (!function_exists('phpinfo') || in_array('phpinfo', array_map('trim', explode(',', (string) ini_get('disable_functions'))), true)) {
+            return null;
+        }
+        ob_start();
+        phpinfo(INFO_GENERAL);
+        $ausgabe = (string) ob_get_clean();
+        if (preg_match('/Build Date\s*(?:=>|<\/td>\s*<td[^>]*>)\s*([A-Za-z]{3}\s+\d{1,2}\s+\d{4}(?:\s+\d{2}:\d{2}:\d{2})?)/', $ausgabe, $m)) {
+            return preg_replace('/\s+/', ' ', trim($m[1]));
+        }
+        return null;
+    }
+}
+
 /** Der vollstaendige Bericht. */
 if (!function_exists('vlip_health_report')) {
     function vlip_health_report(): WP_REST_Response
@@ -329,7 +353,7 @@ if (!function_exists('vlip_health_report')) {
 
         return new WP_REST_Response([
             'wp'      => vlip_health_core(),
-            'php'     => ['version' => PHP_VERSION, 'eolDate' => $php_eol[$kurz] ?? null],
+            'php'     => ['version' => PHP_VERSION, 'eolDate' => $php_eol[$kurz] ?? null, 'buildDate' => vlip_health_php_build()],
             'plugins' => vlip_health_plugins(),
             'themes'  => vlip_health_themes(),
             'db'      => vlip_health_db(),
