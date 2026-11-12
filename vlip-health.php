@@ -3,7 +3,7 @@
  * Plugin Name: VLIP Health
  * Plugin URI:  https://vlip.io
  * Description: Liest den Zustand dieser Installation und gibt ihn am Endpunkt /wp-json/vlip/v1/health aus. Nur lesend.
- * Version:     1.1.6
+ * Version:     1.1.7
  * Author:      VLIP GmbH
  * Author URI:  https://vlip.io
  * Requires PHP: 8.1
@@ -39,7 +39,7 @@ if (defined('VLIP_HEALTH_LOADED')) {
 define('VLIP_HEALTH_LOADED', true);
 
 /** Muss mit dem Header oben und mit HEALTH_PLUGIN_VERSION im Dashboard (src/lib/wp-health.ts) uebereinstimmen. */
-define('VLIP_HEALTH_VERSION', '1.1.6');
+define('VLIP_HEALTH_VERSION', '1.1.7');
 
 /**
  * Woher Updates kommen: eine update.json mit {version, download_url}. Der
@@ -452,6 +452,39 @@ add_filter('plugins_api', function ($ergebnis, $aktion, $args) {
 add_filter('auto_update_plugin', function ($update, $item) {
     return (is_object($item) && ($item->plugin ?? '') === plugin_basename(__FILE__)) ? true : $update;
 }, 10, 2);
+
+/* ---------------------------------------------------------------------------
+ * Keine Update-Mails an die Agentur-Adresse (José, 11/2026).
+ *
+ * WordPress schickt nach jedem automatischen Update von Kern, Plugins und
+ * Themes eine Mail an die Admin-Adresse der Seite. Steht dort noch
+ * admin@vlip.io, landen die Mails bei uns, obwohl das Dashboard die Updates
+ * ohnehin ueber den Health-Endpunkt sieht. Die Admin-Adresse auf den Kunden
+ * umzustellen geht nicht immer. Deshalb: Ist die Admin-Adresse unsere,
+ * verschickt WordPress diese Mails nicht. Hat die Seite eine andere
+ * Admin-Adresse, aendert sich nichts. Andere Mails (Passwort, Recovery Mode
+ * nach Fatal Error) bleiben unberuehrt. Adresse per Konstante
+ * VLIP_HEALTH_MUTE_UPDATE_MAILS_TO aenderbar, leer schaltet es ab.
+ * ------------------------------------------------------------------------- */
+if (!defined('VLIP_HEALTH_MUTE_UPDATE_MAILS_TO')) {
+    define('VLIP_HEALTH_MUTE_UPDATE_MAILS_TO', 'admin@vlip.io');
+}
+
+if (!function_exists('vlip_health_update_mail_erlaubt')) {
+    function vlip_health_update_mail_erlaubt($senden)
+    {
+        $stumm = strtolower(trim((string) VLIP_HEALTH_MUTE_UPDATE_MAILS_TO));
+        $admin = strtolower(trim((string) get_site_option('admin_email')));
+        return ($stumm !== '' && $admin === $stumm) ? false : $senden;
+    }
+}
+
+// Ergebnis-Mails nach automatischen Updates (Erfolg und Fehlschlag).
+add_filter('auto_core_update_send_email', 'vlip_health_update_mail_erlaubt', 99);
+add_filter('auto_plugin_update_send_email', 'vlip_health_update_mail_erlaubt', 99);
+add_filter('auto_theme_update_send_email', 'vlip_health_update_mail_erlaubt', 99);
+// Hinweis „neue WordPress-Version verfuegbar“, wenn Kern-Updates nicht automatisch laufen.
+add_filter('send_core_update_notification_email', 'vlip_health_update_mail_erlaubt', 99);
 
 /* ---------------------------------------------------------------------------
  * Vorschaubilder ohne Cookie-Banner (José, 10/2026).
